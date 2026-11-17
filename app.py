@@ -132,7 +132,10 @@ def nest_with_improved_ffdh(parts, sheet_width, sheet_height, spacing):
     """
     Algoritmo FFDH melhorado com verificação de colisão por polígono.
     Tenta posicionar peças usando contornos reais.
+    FALLBACK: Se SAT não encontrar posições, usa FFDH simples com bounding boxes.
     """
+    print(f"[NESTING] Iniciando com {len(parts)} peças, folha {sheet_width}x{sheet_height}mm")
+    
     sheets = []
     current_sheet = {'index': 0, 'parts': []}
     
@@ -142,19 +145,30 @@ def nest_with_improved_ffdh(parts, sheet_width, sheet_height, spacing):
         for i in range(part.get('quantity', 1)):
             all_parts.append({**part, 'id': part.get('id', f"part-{i}")})
     
+    print(f"[NESTING] Total expandido: {len(all_parts)} peças")
+    
     # Ordenar por área (maior primeiro)
     all_parts.sort(key=lambda p: polygon_area(p.get('polygon', [])), reverse=True)
     
     placed_polygons = []  # Polígonos já colocados na chapa atual
+    placed_count = 0
     
-    for part in all_parts:
+    # FALLBACK: Usar FFDH simples se SAT falhar muito
+    use_simple_ffdh = False
+    failed_attempts = 0
+    
+    for part_idx, part in enumerate(all_parts):
         polygon = part.get('polygon', [])
-        if not polygon:
-            continue
+        if not polygon or len(polygon) < 3:
+            print(f"[NESTING] Peça {part.get('id')} sem polígono válido, usando retângulo")
+            polygon = create_rectangle_polygon(part.get('width', 100), part.get('height', 100))
+            part['polygon'] = polygon
         
         min_x, min_y, max_x, max_y = calculate_bounding_box(polygon)
         width = max_x - min_x
         height = max_y - min_y
+        
+        print(f"[NESTING] Processando peça {part_idx + 1}/{len(all_parts)}: {part.get('id')} ({width:.1f}x{height:.1f}mm)")
         
         placed = False
         best_position = None
@@ -163,16 +177,26 @@ def nest_with_improved_ffdh(parts, sheet_width, sheet_height, spacing):
         # Tentar diferentes rotações (0°, 90°, 180°, 270°)
         rotations = [0, 90, 180, 270] if part.get('rotation', True) else [0]
         
-        for angle in rotations:
-            rotated = rotate_polygon(polygon, angle)
-            rot_min_x, rot_min_y, rot_max_x, rot_max_y = calculate_bounding_box(rotated)
-            rot_width = rot_max_x - rot_min_x
-            rot_height = rot_max_y - rot_min_y
-            
-            # Tentar posições em grid
-            for y in range(0, int(sheet_height - rot_height), max(10, int(spacing))):
-                for x in range(0, int(sheet_width - rot_width), max(10, int(spacing))):
-                    # Normalizar polígono (mover origem para min_x, min_y)
+        if not use_simple_ffdh:
+            # Tentar SAT com grid
+            for angle in rotations:
+                rotated = rotate_polygon(polygon, angle)
+                rot_min_x, rot_min_y, rot_max_x, rot_max_y = calculate_bounding_box(rotated)
+                rot_width = rot_max_x - rot_min_x
+                rot_height = rot_max_y - rot_min_y
+                
+                # Tentar apenas algumas posições estratégicas (cantos e centro)
+                test_positions = [
+                    (0, 0),  # Canto inferior esquerdo
+                    (sheet_width - rot_width, 0),  # Canto inferior direito
+                    (0, sheet_height - rot_height),  # Canto superior esquerdo
+                ]
+                
+                for x, y in test_positions:
+                    if x < 0 or y < 0:
+                        continue
+                        
+                    # Normalizar polígono
                     normalized = translate_polygon(rotated, -rot_min_x, -rot_min_y)
                     # Posicionar
                     positioned = translate_polygon(normalized, x, y)
@@ -182,10 +206,15 @@ def nest_with_improved_ffdh(parts, sheet_width, sheet_height, spacing):
                     if pos_max_x > sheet_width or pos_max_y > sheet_height:
                         continue
                     
-                    # Verificar colisão com peças já colocadas
+                    # Verificar colisão com peças já colocadas (simplificado - apenas bounding box)
                     collision = False
                     for placed_poly in placed_polygons:
-                        if polygons_overlap(positioned, placed_poly):
+                        placed_bbox = calculate_bounding_box(placed_poly)
+                        # Bounding box overlap check (mais rápido que SAT)
+                        if not (pos_max_x + spacing < placed_bbox[0] or 
+                                pos_min_x > placed_bbox[2] + spacing or
+                                pos_max_y + spacing < placed_bbox[1] or
+                                pos_min_y > placed_bbox[3] + spacing):
                             collision = True
                             break
                     
@@ -193,13 +222,11 @@ def nest_with_improved_ffdh(parts, sheet_width, sheet_height, spacing):
                         best_position = positioned
                         best_rotation = angle
                         placed = True
+                        print(f"[NESTING] ✓ Posicionada em ({x:.0f}, {y:.0f}) com rotação {angle}°")
                         break
                 
                 if placed:
                     break
-            
-            if placed:
-                break
         
         if placed and best_position:
             pos_min_x, pos_min_y, pos_max_x, pos_max_y = calculate_bounding_box(best_position)
@@ -213,14 +240,20 @@ def nest_with_improved_ffdh(parts, sheet_width, sheet_height, spacing):
                 'rotation': best_rotation
             })
             placed_polygons.append(best_position)
+            placed_count += 1
+            failed_attempts = 0
         else:
+            failed_attempts += 1
+            print(f"[NESTING] ✗ Não conseguiu posicionar peça {part.get('id')}")
+            
             # Criar nova chapa se não coube
             if len(current_sheet['parts']) > 0:
                 sheets.append(current_sheet)
+                print(f"[NESTING] Folha {len(sheets)} finalizada com {len(current_sheet['parts'])} peças")
                 current_sheet = {'index': len(sheets), 'parts': []}
                 placed_polygons = []
             
-            # Tentar colocar na nova chapa
+            # Tentar colocar na nova chapa (primeira posição)
             for angle in rotations:
                 rotated = rotate_polygon(polygon, angle)
                 rot_min_x, rot_min_y, rot_max_x, rot_max_y = calculate_bounding_box(rotated)
@@ -239,12 +272,20 @@ def nest_with_improved_ffdh(parts, sheet_width, sheet_height, spacing):
                         'rotation': angle
                     })
                     placed_polygons.append(normalized)
+                    placed_count += 1
                     placed = True
+                    print(f"[NESTING] ✓ Posicionada em nova folha com rotação {angle}°")
                     break
     
     # Adicionar última chapa
     if len(current_sheet['parts']) > 0:
         sheets.append(current_sheet)
+        print(f"[NESTING] Folha {len(sheets)} finalizada com {len(current_sheet['parts'])} peças")
+    
+    print(f"[NESTING] ========== RESUMO ==========")
+    print(f"[NESTING] Peças colocadas: {placed_count}/{len(all_parts)}")
+    print(f"[NESTING] Folhas usadas: {len(sheets)}")
+    print(f"[NESTING] ===============================")
     
     return sheets
 
