@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import rectpack
+from genetic_nesting import GeneticNesting
 
 app = Flask(__name__)
 CORS(app)
@@ -11,74 +11,52 @@ def health():
 
 @app.route('/nest', methods=['POST'])
 def nest():
-    """Nesting simples usando rectpack (retângulos)"""
+    """Nesting usando Algoritmo Genético (baseado no eCut)"""
     try:
         data = request.json
         parts = data.get('parts', [])
         sheet_width = data.get('sheet_width', 1600)
         sheet_height = data.get('sheet_height', 2000)
         spacing = data.get('spacing', 2)
+        genetics_time = data.get('genetics_time', 10)  # Tempo do algoritmo genético
         
+        print(f"[NESTING] ========== ALGORITMO GENÉTICO ==========")
         print(f"[NESTING] Recebidas {len(parts)} peças")
-        print(f"[NESTING] Folha: {sheet_width}x{sheet_height}mm, spacing: {spacing}mm")
+        print(f"[NESTING] Folha: {sheet_width}x{sheet_height}mm")
+        print(f"[NESTING] Spacing: {spacing}mm")
+        print(f"[NESTING] Genetics Time: {genetics_time}s")
         
-        # Criar bins (folhas)
-        packer = rectpack.newPacker(rotation=True)
+        # Criar instância do algoritmo genético
+        genetic = GeneticNesting(
+            sheet_width=sheet_width,
+            sheet_height=sheet_height,
+            spacing=spacing,
+            genetics_time=genetics_time,
+            genetics_check=3,
+            population_size=100
+        )
         
-        # Adicionar peças ao packer
-        for i, part in enumerate(parts):
-            width = int(part['width'] + spacing)
-            height = int(part['height'] + spacing)
-            packer.add_rect(width, height, rid=i)
-            print(f"[NESTING] Peça {i}: {part.get('id')} {width}x{height}mm")
-        
-        # Adicionar bins ilimitados
-        for _ in range(100):  # Máximo 100 folhas
-            packer.add_bin(sheet_width, sheet_height)
-        
-        # Executar packing
-        packer.pack()
-        
-        # Processar resultados
-        sheets = []
-        for bin_index, bin_rects in enumerate(packer):
-            if not bin_rects:
-                continue
-                
-            sheet_parts = []
-            for rect in bin_rects:
-                part_index = rect.rid
-                part = parts[part_index]
-                
-                sheet_parts.append({
-                    'id': part.get('id', f'part-{part_index}'),
-                    'x': float(rect.x),
-                    'y': float(rect.y),
-                    'width': float(rect.width - spacing),
-                    'height': float(rect.height - spacing),
-                    'rotated': rect.width == int(part['height'] + spacing),
-                    'rotation': 90 if rect.width == int(part['height'] + spacing) else 0
-                })
-            
-            sheets.append({
-                'index': bin_index,
-                'parts': sheet_parts
-            })
-            print(f"[NESTING] Folha {bin_index + 1}: {len(sheet_parts)} peças")
+        # Executar algoritmo genético
+        sheets = genetic.run(parts)
         
         # Calcular eficiência
         total_part_area = sum(p['width'] * p['height'] for p in parts)
-        total_sheet_area = len(sheets) * sheet_width * sheet_height
+        placed_parts = sum(len(s['parts']) for s in sheets)
+        total_sheet_area = len(sheets) * sheet_width * sheet_height if sheets else 1
         efficiency = (total_part_area / total_sheet_area * 100) if total_sheet_area > 0 else 0
         
-        print(f"[NESTING] Total: {len(sheets)} folhas, {efficiency:.1f}% aproveitamento")
+        print(f"[NESTING] ========== RESULTADO ==========")
+        print(f"[NESTING] Folhas: {len(sheets)}")
+        print(f"[NESTING] Peças colocadas: {placed_parts}/{len(parts)}")
+        print(f"[NESTING] Eficiência: {efficiency:.1f}%")
+        print(f"[NESTING] ===================================")
         
         return jsonify({
             'success': True,
             'sheets': sheets,
             'efficiency': efficiency,
             'total_parts': len(parts),
-            'placed_parts': sum(len(s['parts']) for s in sheets)
+            'placed_parts': placed_parts
         })
         
     except Exception as e:
