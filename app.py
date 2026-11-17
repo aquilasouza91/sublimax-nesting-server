@@ -178,51 +178,50 @@ def nest_with_improved_ffdh(parts, sheet_width, sheet_height, spacing):
         rotations = [0, 90, 180, 270] if part.get('rotation', True) else [0]
         
         if not use_simple_ffdh:
-            # Tentar SAT com grid
+            # Tentar SAT com grid completo (step baseado no tamanho da peça)
             for angle in rotations:
                 rotated = rotate_polygon(polygon, angle)
                 rot_min_x, rot_min_y, rot_max_x, rot_max_y = calculate_bounding_box(rotated)
                 rot_width = rot_max_x - rot_min_x
                 rot_height = rot_max_y - rot_min_y
                 
-                # Tentar apenas algumas posições estratégicas (cantos e centro)
-                test_positions = [
-                    (0, 0),  # Canto inferior esquerdo
-                    (sheet_width - rot_width, 0),  # Canto inferior direito
-                    (0, sheet_height - rot_height),  # Canto superior esquerdo
-                ]
+                # Step adaptativo: menor entre spacing ou 10% do tamanho da peça
+                step_x = max(int(spacing), min(50, int(rot_width * 0.1)))
+                step_y = max(int(spacing), min(50, int(rot_height * 0.1)))
                 
-                for x, y in test_positions:
-                    if x < 0 or y < 0:
-                        continue
+                # Grid search
+                for y in range(0, max(1, int(sheet_height - rot_height)), step_y):
+                    for x in range(0, max(1, int(sheet_width - rot_width)), step_x):
+                        # Normalizar polígono
+                        normalized = translate_polygon(rotated, -rot_min_x, -rot_min_y)
+                        # Posicionar
+                        positioned = translate_polygon(normalized, x, y)
                         
-                    # Normalizar polígono
-                    normalized = translate_polygon(rotated, -rot_min_x, -rot_min_y)
-                    # Posicionar
-                    positioned = translate_polygon(normalized, x, y)
-                    
-                    # Verificar se está dentro da chapa
-                    pos_min_x, pos_min_y, pos_max_x, pos_max_y = calculate_bounding_box(positioned)
-                    if pos_max_x > sheet_width or pos_max_y > sheet_height:
-                        continue
-                    
-                    # Verificar colisão com peças já colocadas (simplificado - apenas bounding box)
-                    collision = False
-                    for placed_poly in placed_polygons:
-                        placed_bbox = calculate_bounding_box(placed_poly)
-                        # Bounding box overlap check (mais rápido que SAT)
-                        if not (pos_max_x + spacing < placed_bbox[0] or 
-                                pos_min_x > placed_bbox[2] + spacing or
-                                pos_max_y + spacing < placed_bbox[1] or
-                                pos_min_y > placed_bbox[3] + spacing):
-                            collision = True
+                        # Verificar se está dentro da chapa
+                        pos_min_x, pos_min_y, pos_max_x, pos_max_y = calculate_bounding_box(positioned)
+                        if pos_max_x > sheet_width or pos_max_y > sheet_height:
+                            continue
+                        
+                        # Verificar colisão com peças já colocadas (bounding box)
+                        collision = False
+                        for placed_poly in placed_polygons:
+                            placed_bbox = calculate_bounding_box(placed_poly)
+                            # Bounding box overlap check com margem de spacing
+                            if not (pos_max_x + spacing <= placed_bbox[0] or 
+                                    pos_min_x >= placed_bbox[2] + spacing or
+                                    pos_max_y + spacing <= placed_bbox[1] or
+                                    pos_min_y >= placed_bbox[3] + spacing):
+                                collision = True
+                                break
+                        
+                        if not collision:
+                            best_position = positioned
+                            best_rotation = angle
+                            placed = True
+                            print(f"[NESTING] ✓ Posicionada em ({x:.0f}, {y:.0f}) com rotação {angle}°")
                             break
                     
-                    if not collision:
-                        best_position = positioned
-                        best_rotation = angle
-                        placed = True
-                        print(f"[NESTING] ✓ Posicionada em ({x:.0f}, {y:.0f}) com rotação {angle}°")
+                    if placed:
                         break
                 
                 if placed:
