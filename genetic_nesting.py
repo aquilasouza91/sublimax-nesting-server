@@ -124,15 +124,18 @@ class GeneticNesting:
             shuffled = pieces.copy()
             random.shuffle(shuffled)
             
-            # Estratégia Bottom-Left com rotação aleatória
+            # Estratégia Bottom-Left com rotação aleatória (OTIMIZADA)
             for piece in shuffled:
                 new_piece = deepcopy(piece)
                 new_piece.rotation = random.choice([0, 90])
                 
+                # Grid search otimizado: step maior para ser mais rápido
+                step = max(20, int(self.spacing * 5))  # Step adaptativo maior
+                
                 # Tentar posicionar
                 placed = False
-                for y in range(0, int(self.sheet_height), max(5, int(self.spacing))):
-                    for x in range(0, int(self.sheet_width), max(5, int(self.spacing))):
+                for y in range(0, int(self.sheet_height), step):
+                    for x in range(0, int(self.sheet_width), step):
                         new_piece.x = x
                         new_piece.y = y
                         

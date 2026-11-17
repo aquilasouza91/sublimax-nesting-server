@@ -26,14 +26,14 @@ def nest():
         print(f"[NESTING] Spacing: {spacing}mm")
         print(f"[NESTING] Genetics Time: {genetics_time}s")
         
-        # Criar instância do algoritmo genético
+        # Criar instância do algoritmo genético (otimizado para velocidade)
         genetic = GeneticNesting(
             sheet_width=sheet_width,
             sheet_height=sheet_height,
             spacing=spacing,
-            genetics_time=genetics_time,
-            genetics_check=3,
-            population_size=100
+            genetics_time=3,  # Reduzido de 10s para 3s
+            genetics_check=2,  # Reduzido de 3 para 2
+            population_size=30  # Reduzido de 100 para 30
         )
         
         # Executar algoritmo genético
